@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { fetchRemitterDetails, fetchBankDetails, saveTransaction } from '../api/api';
+import axios from 'axios';
 import debounce from 'lodash/debounce';
 import DashboardLayout from './DashboardLayout';
 import { encryptData, decryptData } from '../utils/crypto-gcm';
@@ -509,7 +509,7 @@ const mockBeneficiaryDatabase = {
     
   }, []);
 
-  // CBS Remitter lookup using new Axios API
+  // CBS Remitter lookup
   const fetchAccountHolderDetails = useCallback(async (orgElementCode, accountHeadCode, accountNo) => {
     console.log('CBS CALLED → Org:', orgElementCode, 'Head:', accountHeadCode);
     
@@ -525,37 +525,67 @@ const mockBeneficiaryDatabase = {
     console.log('FULL ACCOUNT NUMBER:', fullAccountNumber);
     
     try {
-      // Use new Axios API function
-      const result = await fetchRemitterDetails(fullAccountNumber);
+      // API call to fetch account details
+      const response = await axios.get(`${API_BASE_URL}/api/account-details/${fullAccountNumber}`);
       
-      if (result.success) {
+      if (response.data) {
         setFormData(prev => ({
           ...prev,
-          accountName: result.data.accountName || '',
-          remitterMobile: result.data.remitterMobile || '',
-          remitterMmid: result.data.remitterMmid || '',
-          withdrawableAmount: result.data.withdrawableAmount || '0.00',
-          chartOfAccount: result.data.chartOfAccount || '10001',
-          remitterIfsc: result.data.remitterIfsc || '',
-          orgId: result.data.orgId || '',
-          bankCode: result.data.bankCode || ''
+          accountName: response.data.accountName || '',
+          mobileNo: response.data.mobileNo || '',
+          mmid: response.data.mmid || '',
+          withdrawableAmount: response.data.withdrawableAmount || '0.00',
+          chartOfAccount: response.data.chartOfAccount || '',
+          remitterIfsc: response.data.remitterIfsc || '',
+          orgId: response.data.orgId || '',
+          bankCode: response.data.bankCode || ''
         }));
         setAccountNameError('');
-        console.log('SUCCESS: Account details fetched using Axios API', result.data);
-      } else {
-        setAccountNameError(result.message || 'Account not found');
-        alert('User Not Found: ' + (result.message || 'Account number does not exist in our records'));
+        console.log('SUCCESS: Account details fetched', response.data);
       }
     } catch (error) {
       console.error('API ERROR:', error);
-      setAccountNameError('Failed to fetch account details');
-      alert('Error fetching account details: ' + (error.message || 'Please try again later'));
+      
+      // Fallback to mock data if API fails
+      const cbsAccounts = {
+        '10081000100': {
+          accountName: 'PRASHANT ANANT SURU',
+          mobileNo: '9822885952',
+          mmid: '8366061',
+          withdrawableAmount: '1284802.33',
+          chartOfAccount: '10001',
+          remitterIfsc: 'HDFC0001001',
+          orgId: '1002',
+          bankCode: 'ANR'
+        }
+      };
+      
+      if (cbsAccounts[fullAccountNumber]) {
+        const account = cbsAccounts[fullAccountNumber];
+        setFormData(prev => ({
+          ...prev,
+          accountName: account.accountName,
+          mobileNo: account.mobileNo,
+          mmid: account.mmid,
+          withdrawableAmount: account.withdrawableAmount,
+          chartOfAccount: account.chartOfAccount,
+          remitterIfsc: account.remitterIfsc || '',
+          orgId: account.orgId || '',
+          bankCode: account.bankCode || ''
+        }));
+        setAccountNameError('');
+        console.log('SUCCESS: Mock data used', account);
+      } else {
+        setAccountNameError('Account not found');
+        alert('User Not Found: Account number does not exist in our records');
+        console.log('NOT FOUND:', fullAccountNumber);
+      }
     } finally {
       setIsFetchingAccount(false);
     }
   }, []);
 
-  // Fetch beneficiary details based on IFSC using new Axios API
+  // Mock API to fetch beneficiary details based on IFSC
   const fetchBeneficiaryDetailsByIfsc = useCallback(async (ifscCode) => {
     console.log('BENEFICIARY API CALL:', ifscCode);
     
@@ -568,20 +598,26 @@ const mockBeneficiaryDatabase = {
     setIfscError('');
     
     try {
-      // Use new Axios API function
-      const result = await fetchBankDetails(ifscCode);
+      // Simulate API call delay
+      await new Promise(resolve => setTimeout(resolve, 1500));
       
-      if (result.success) {
-        const beneficiaryData = result.data;
+      // Mock API response
+      const response = {
+        success: true,
+        data: mockBeneficiaryDatabase[ifscCode] || null
+      };
+      
+      if (response.success && response.data) {
+        const beneficiaryData = response.data;
         setFormData(prev => ({
           ...prev,
           beneficiaryBankName: beneficiaryData.bankName,
           beneficiaryBranchName: beneficiaryData.branchName,
-          beneficiaryMmid: beneficiaryData.beneficiaryMmid,
-          beneficiaryMobileNo: beneficiaryData.beneficiaryMobileNo
+          beneficiaryMmid: beneficiaryData.mmid,
+          beneficiaryMobileNo: beneficiaryData.mobileNo
         }));
         setIfscError('');
-        console.log('BENEFICIARY DETAILS FETCHED using Axios API:', beneficiaryData);
+        console.log('BENEFICIARY DETAILS FETCHED:', beneficiaryData);
       } else {
         // IFSC not found in database
         setFormData(prev => ({
@@ -591,7 +627,7 @@ const mockBeneficiaryDatabase = {
           beneficiaryMmid: '',
           beneficiaryMobileNo: ''
         }));
-        setIfscError(result.message || 'Invalid IFSC or Bank details not found');
+        setIfscError('Invalid IFSC or Bank details not found');
         console.log('BENEFICIARY NOT FOUND for IFSC:', ifscCode);
       }
     } catch (error) {
@@ -603,8 +639,7 @@ const mockBeneficiaryDatabase = {
         beneficiaryMmid: '',
         beneficiaryMobileNo: ''
       }));
-      setIfscError('Failed to fetch bank details');
-      alert('Error fetching bank details: ' + (error.message || 'Please try again later'));
+      setIfscError('Failed to fetch bank details. Please try again.');
     } finally {
       setIsFetchingIfscDetails(false);
     }
@@ -679,8 +714,8 @@ const mockBeneficiaryDatabase = {
             ...prev,
             displayAccountNumber: `${prev.orgElementCode}${prev.accountHeadCode}${value}`, // Show full account number
             fetchedAccountName: matchedAccount.accountName, // Store account name separately
-            remitterMmid: matchedAccount.mmid,
-            remitterMobile: matchedAccount.mobileNo,
+            mmid: matchedAccount.mmid,
+            mobileNo: matchedAccount.mobileNo,
             withdrawableAmount: matchedAccount.withdrawableAmount,
             chartOfAccount: matchedAccount.chartOfAccount,
             remitterIfsc: matchedAccount.remitterIfsc || '',
@@ -699,8 +734,8 @@ const mockBeneficiaryDatabase = {
             ...prev,
             displayAccountNumber: `${prev.orgElementCode}${prev.accountHeadCode}${value}`, // Show full account number
             fetchedAccountName: '', // Clear account name
-            remitterMmid: '',
-            remitterMobile: '',
+            mmid: '',
+            mobileNo: '',
             withdrawableAmount: '0.00',
             chartOfAccount: '10001', // Keep default
             remitterIfsc: '',
@@ -767,8 +802,8 @@ const mockBeneficiaryDatabase = {
       accountHeadCode: '',
       accountNo: '',
       accountName: '',
-      remitterMobile: '',
-      remitterMmid: '',
+      mobileNo: '',
+      mmid: '',
       remitterAccountType: 'SAVINGS',
       beneficiaryIfscCode: '',
       beneficiaryAccountNo: '',
@@ -776,7 +811,7 @@ const mockBeneficiaryDatabase = {
       beneficiaryMobile: '',
       beneficiaryBankName: '',
       beneficiaryBranchName: '',
-      transactionAmount: '',
+      transactionAmount: '0.00',
       withdrawableAmount: '0',
       purpose: 'IMPS',
       remarks: ''
@@ -796,161 +831,73 @@ const mockBeneficiaryDatabase = {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    console.log('=== DEEP VALIDATION DEBUG ===');
-    console.log("Current Form State:", formData);
+    console.log('IMPS Save Transaction Started');
+    console.log("Current Form Data:", formData);
     console.log("Form Data Keys:", Object.keys(formData));
-    console.log("Form Data Values:", {
-      branch: formData.branch,
-      orgElementCode: formData.orgElementCode,
-      accountHeadCode: formData.accountHeadCode,
-      accountNo: formData.accountNo,
-      remitterMmid: formData.remitterMmid,
-      remitterMobile: formData.remitterMobile,
-      transactionAmount: formData.transactionAmount,
-      beneficiaryIfscCode: formData.beneficiaryIfscCode,
-      beneficiaryMmid: formData.beneficiaryMmid,
-      beneficiaryMobileNo: formData.beneficiaryMobileNo
-    });
-    
-    // Debug specific fields that are causing error
-    console.log("🔍 SPECIFIC DEBUG - Problem Fields:");
-    console.log("remitterMmid value:", `"${formData.remitterMmid}"`);
-    console.log("remitterMmid type:", typeof formData.remitterMmid);
-    console.log("remitterMmid length:", formData.remitterMmid ? formData.remitterMmid.length : 'NULL');
-    console.log("remitterMmid trimmed:", formData.remitterMmid ? formData.remitterMmid.toString().trim() : 'NULL');
-    console.log("remitterMmid isEmpty:", !formData.remitterMmid || formData.remitterMmid.toString().trim() === '');
-    
-    console.log("remitterMobile value:", `"${formData.remitterMobile}"`);
-    console.log("remitterMobile type:", typeof formData.remitterMobile);
-    console.log("remitterMobile length:", formData.remitterMobile ? formData.remitterMobile.length : 'NULL');
-    console.log("remitterMobile trimmed:", formData.remitterMobile ? formData.remitterMobile.toString().trim() : 'NULL');
-    console.log("remitterMobile isEmpty:", !formData.remitterMobile || formData.remitterMobile.toString().trim() === '');
     
     try {
       setIsSubmitting(true);
       
-      // Simplified validation - only check fields visible in UI
-      const validationErrors = [];
+      // Validate required fields (marked with *)
+      const requiredFields = [
+        { field: 'branch', name: 'Branch' },
+        { field: 'orgElementCode', name: 'Account Part 1' },
+        { field: 'accountHeadCode', name: 'Account Part 2' },
+        { field: 'accountNo', name: 'Account Part 3' },
+        { field: 'remitterMmid', name: 'Remitter MMID' },
+        { field: 'remitterMobile', name: 'Remitter Mobile' },
+        { field: 'transactionAmount', name: 'Transaction Amount' },
+        { field: 'beneficiaryIfscCode', name: 'Beneficiary IFSC' },
+        { field: 'beneficiaryMmid', name: 'Beneficiary MMID' },
+        { field: 'beneficiaryMobileNo', name: 'Beneficiary Mobile' }
+      ];
       
-      // Remitter Details Validation
-      if (!formData.branch || formData.branch.toString().trim() === '') {
-        validationErrors.push('Branch');
-        console.log("❌ Branch validation failed");
-      }
-      if (!formData.orgElementCode || formData.orgElementCode.toString().trim() === '') {
-        validationErrors.push('Account Part 1');
-        console.log("❌ Account Part 1 validation failed");
-      }
-      if (!formData.accountHeadCode || formData.accountHeadCode.toString().trim() === '') {
-        validationErrors.push('Account Part 2');
-        console.log("❌ Account Part 2 validation failed");
-      }
-      if (!formData.accountNo || formData.accountNo.toString().trim() === '') {
-        validationErrors.push('Account Part 3');
-        console.log("❌ Account Part 3 validation failed");
-      }
+      // Check each required field with detailed logging
+      console.log("Checking required fields...");
+      const emptyFields = requiredFields.filter(({ field, name }) => {
+        const value = formData[field];
+        const isEmpty = !value || value.toString().trim() === '';
+        console.log(`Field ${name} (${field}):`, value, isEmpty ? 'EMPTY' : 'OK');
+        return isEmpty;
+      });
       
-      // Enhanced debugging for MMID
-      console.log("🔍 MMID Validation Check:");
-      const mmidValue = formData.remitterMmid;
-      console.log("  - Raw value:", mmidValue);
-      console.log("  - Type:", typeof mmidValue);
-      console.log("  - Is undefined:", mmidValue === undefined);
-      console.log("  - Is null:", mmidValue === null);
-      console.log("  - String conversion:", mmidValue ? mmidValue.toString() : 'NULL');
-      console.log("  - Trimmed value:", mmidValue ? mmidValue.toString().trim() : 'NULL');
-      console.log("  - Trimmed length:", mmidValue ? mmidValue.toString().trim().length : 'NULL');
-      console.log("  - Is empty check:", !mmidValue || mmidValue.toString().trim() === '');
-      
-      if (!mmidValue || mmidValue.toString().trim() === '') {
-        validationErrors.push('Remitter MMID');
-        console.log("❌ MMID validation FAILED - adding to errors");
-      } else {
-        console.log("✅ MMID validation PASSED");
-      }
-      
-      // Enhanced debugging for Mobile
-      console.log("🔍 Mobile Validation Check:");
-      const mobileValue = formData.remitterMobile;
-      console.log("  - Raw value:", mobileValue);
-      console.log("  - Type:", typeof mobileValue);
-      console.log("  - Is undefined:", mobileValue === undefined);
-      console.log("  - Is null:", mobileValue === null);
-      console.log("  - String conversion:", mobileValue ? mobileValue.toString() : 'NULL');
-      console.log("  - Trimmed value:", mobileValue ? mobileValue.toString().trim() : 'NULL');
-      console.log("  - Trimmed length:", mobileValue ? mobileValue.toString().trim().length : 'NULL');
-      console.log("  - Is empty check:", !mobileValue || mobileValue.toString().trim() === '');
-      
-      if (!mobileValue || mobileValue.toString().trim() === '') {
-        validationErrors.push('Remitter Mobile');
-        console.log("❌ Mobile validation FAILED - adding to errors");
-      } else {
-        console.log("✅ Mobile validation PASSED");
-      }
-      
-      if (!formData.transactionAmount || formData.transactionAmount.toString().trim() === '') {
-        validationErrors.push('Transaction Amount');
-        console.log("❌ Transaction Amount validation failed");
-      }
-      
-      // Beneficiary Details Validation
-      if (!formData.beneficiaryIfscCode || formData.beneficiaryIfscCode.toString().trim() === '') {
-        validationErrors.push('Beneficiary IFSC');
-        console.log("❌ Beneficiary IFSC validation failed");
-      }
-      if (!formData.beneficiaryMmid || formData.beneficiaryMmid.toString().trim() === '') {
-        validationErrors.push('Beneficiary MMID');
-        console.log("❌ Beneficiary MMID validation failed");
-      }
-      if (!formData.beneficiaryMobileNo || formData.beneficiaryMobileNo.toString().trim() === '') {
-        validationErrors.push('Beneficiary Mobile');
-        console.log("❌ Beneficiary Mobile validation failed");
-      }
-      
-      console.log("🔍 FINAL VALIDATION RESULT:");
-      console.log("  - Total errors found:", validationErrors.length);
-      console.log("  - Error list:", validationErrors);
-      console.log("  - Should proceed:", validationErrors.length === 0);
-      
-      console.log("Validation Errors Found:", validationErrors);
-      
-      if (validationErrors.length > 0) {
-        const errorMessage = `Validation Error: ${validationErrors.join(', ')} is missing`;
-        console.log("VALIDATION FAILED:", errorMessage);
-        alert(errorMessage);
+      if (emptyFields.length > 0) {
+        console.log("Empty fields found:", emptyFields);
+        alert('Validation Error: Please fill in all required fields before saving.');
         return;
       }
       
-      // Format validation with type checking
-      const ifscCode = formData.beneficiaryIfscCode.toString().trim();
+      // Validate IFSC Code format (11 characters)
+      const ifscCode = formData.beneficiaryIfscCode ? formData.beneficiaryIfscCode.trim() : '';
       if (ifscCode.length !== 11) {
         console.log("IFSC validation failed:", ifscCode, "length:", ifscCode.length);
-        alert('Validation Error: Beneficiary IFSC must be 11 characters');
+        alert('Validation Error: Please enter a valid 11-digit IFSC Code');
         return;
       }
       
-      const remitterMobile = formData.remitterMobile.toString().trim();
-      if (remitterMobile.length !== 10 || isNaN(remitterMobile)) {
-        console.log("Remitter mobile validation failed:", remitterMobile);
-        alert('Validation Error: Remitter Mobile must be 10 digits');
+      // Validate mobile numbers (10 digits)
+      const remitterMobile = formData.remitterMobile ? formData.remitterMobile.trim() : '';
+      if (remitterMobile.length !== 10) {
+        console.log("Remitter mobile validation failed:", remitterMobile, "length:", remitterMobile.length);
+        alert('Validation Error: Please enter a valid 10-digit Remitter Mobile Number');
         return;
       }
       
-      const beneficiaryMobile = formData.beneficiaryMobileNo.toString().trim();
-      if (beneficiaryMobile.length !== 10 || isNaN(beneficiaryMobile)) {
-        console.log("Beneficiary mobile validation failed:", beneficiaryMobile);
-        alert('Validation Error: Beneficiary Mobile must be 10 digits');
+      const beneficiaryMobile = formData.beneficiaryMobileNo ? formData.beneficiaryMobileNo.trim() : '';
+      if (beneficiaryMobile.length !== 10) {
+        console.log("Beneficiary mobile validation failed:", beneficiaryMobile, "length:", beneficiaryMobile.length);
+        alert('Validation Error: Please enter a valid 10-digit Beneficiary Mobile Number');
         return;
       }
       
-      const amount = parseFloat(formData.transactionAmount.toString().trim());
+      // Validate transaction amount (should be greater than 0)
+      const amountStr = formData.transactionAmount ? formData.transactionAmount.trim() : '';
+      const amount = parseFloat(amountStr);
       if (isNaN(amount) || amount <= 0) {
-        console.log("Amount validation failed:", formData.transactionAmount, "parsed:", amount);
-        alert('Validation Error: Transaction Amount must be greater than 0');
+        console.log("Amount validation failed:", amountStr, "parsed:", amount);
+        alert('Validation Error: Please enter a valid Transaction Amount greater than 0');
         return;
       }
-      
-      console.log("✅ VALIDATION PASSED - Proceeding to save transaction");
       
       // Prepare data for API
       const transactionData = {
@@ -974,26 +921,37 @@ const mockBeneficiaryDatabase = {
         purpose: formData.purpose
       };
       
-      // Use new Axios API function to save transaction
-      const result = await saveTransaction(transactionData);
+      // Send POST request to backend
+      const response = await fetch('/api/save-transaction', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(transactionData)
+      });
       
-      if (result.success) {
-        // Success handling
-        alert('Success! Transaction details have been saved successfully.');
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const result = await response.json();
+      
+      // Success handling
+      alert('Success! Transaction details have been saved successfully.');
+      
+      // Reset form to empty state after successful save
+      setFormData({
+        // Transaction Details
+        txnType: 'IMPS',
+        branch: "",
+        branchIfscCode: '',
+        branchName: '',
+        remitterIfscCode: '',
+        orgId: '',          
+        bankCode: '',
         
-        // Reset form to empty state after successful save
-        setFormData({
-          // Transaction Details
-          txnType: 'IMPS',
-          branch: "",
-          branchIfscCode: '',
-          branchName: '',
-          remitterIfscCode: '',
-          orgId: '',          
-          bankCode: '',
-          
-          // Account Details
-          orgElementCode: '',
+        // Account Details
+        orgElementCode: '',
         accountHeadCode: '',
         accountNo: '',
         accountNumber: '',
@@ -1005,6 +963,7 @@ const mockBeneficiaryDatabase = {
         remitterMmid: '',
         remitterMobile: '',
         transactionAmount: '',
+        withdrawableAmount: '',
         
         // Beneficiary Details
         beneficiaryMmid: '',
@@ -1022,9 +981,6 @@ const mockBeneficiaryDatabase = {
         displayAccountNumber: '',
         fetchedAccountName: ''
       });
-      } else {
-        alert(result.message || 'Failed to save transaction');
-      }
       
     } catch (error) {
       console.error('Save Failed:', error);
@@ -1249,8 +1205,8 @@ const mockBeneficiaryDatabase = {
                 <div className="text-xs font-bold text-gray-700 mb-1">MMID</div>
                 <input
                   type="text"
-                  name="remitterMmid"
-                  value={formData.remitterMmid}
+                  name="mmid"
+                  value={formData.mmid}
                   readOnly
                   className="w-full px-2 py-1 text-xs border border-gray-300 bg-gray-50 text-gray-600"
                 />
@@ -1261,8 +1217,8 @@ const mockBeneficiaryDatabase = {
                 <div className="text-xs font-bold text-gray-700 mb-1">Mobile No.</div>
                 <input
                   type="text"
-                  name="remitterMobile"
-                  value={formData.remitterMobile}
+                  name="mobileNo"
+                  value={formData.mobileNo}
                   readOnly
                   className="w-full px-2 py-1 text-xs border border-gray-300 bg-gray-50 text-gray-600"
                 />
